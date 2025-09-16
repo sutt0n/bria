@@ -15,6 +15,8 @@ pub struct JobsConfig {
     pub respawn_all_outbox_handlers_delay: Duration,
     #[serde(default)]
     pub signing: SigningJobConfig,
+    #[serde(default)]
+    pub electrum_pool: ElectrumPoolConfig,
 }
 
 #[serde_with::serde_as]
@@ -29,6 +31,14 @@ pub struct SigningJobConfig {
     pub max_retry_delay: Duration,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElectrumPoolConfig {
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+    #[serde(default = "default_min_idle")]
+    pub min_idle: usize,
+}
+
 impl Default for JobsConfig {
     fn default() -> Self {
         Self {
@@ -36,6 +46,7 @@ impl Default for JobsConfig {
             process_all_payout_queues_delay: default_process_all_payout_queues_delay(),
             respawn_all_outbox_handlers_delay: default_respawn_all_outbox_handlers_delay(),
             signing: SigningJobConfig::default(),
+            electrum_pool: ElectrumPoolConfig::default(),
         }
     }
 }
@@ -46,6 +57,15 @@ impl Default for SigningJobConfig {
             warn_retries: default_signing_warn_retries(),
             max_attempts: default_signing_max_attempts(),
             max_retry_delay: default_signing_max_retry_delay(),
+        }
+    }
+}
+
+impl Default for ElectrumPoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: default_max_connections(),
+            min_idle: default_min_idle(),
         }
     }
 }
@@ -72,4 +92,12 @@ fn default_signing_max_attempts() -> u32 {
 
 fn default_signing_max_retry_delay() -> Duration {
     Duration::from_secs(300)
+}
+
+fn default_max_connections() -> usize {
+    10
+}
+
+fn default_min_idle() -> usize {
+    3
 }

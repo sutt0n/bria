@@ -16,9 +16,9 @@ use tracing::instrument;
 use uuid::{uuid, Uuid};
 
 use crate::{
-    account::*, address::Addresses, app::BlockchainConfig, batch::*, fees::FeesClient,
-    ledger::Ledger, outbox::*, payout::*, payout_queue::*, primitives::*, signing_session::*,
-    utxo::Utxos, wallet::*, xpub::*,
+    account::*, address::Addresses, app::BlockchainConfig, batch::*,
+    electrum_client_pool::ElectrumClientPool, fees::FeesClient, ledger::Ledger, outbox::*,
+    payout::*, payout_queue::*, primitives::*, signing_session::*, utxo::Utxos, wallet::*, xpub::*,
 };
 use batch_broadcasting::BatchBroadcastingData;
 use batch_signing::BatchSigningData;
@@ -52,6 +52,12 @@ pub async fn start_job_runner(
     signer_encryption_config: SignerEncryptionConfig,
     fees_client: FeesClient,
 ) -> Result<JobRunnerHandle, JobError> {
+    let electrum_pool = ElectrumClientPool::new(
+        blockchain_cfg.electrum_url.clone(),
+        config.electrum_pool.max_connections,
+        config.electrum_pool.min_idle,
+    );
+    electrum_pool.ensure_min_idle().await?;
     let mut registry = JobRegistry::new(&[
         sync_all_wallets,
         sync_wallet,
@@ -66,6 +72,7 @@ pub async fn start_job_runner(
     ]);
     registry.set_context(config);
     registry.set_context(blockchain_cfg);
+    registry.set_context(electrum_pool);
     registry.set_context(outbox);
     registry.set_context(wallets);
     registry.set_context(xpubs);
@@ -188,6 +195,7 @@ async fn sync_wallet(
     mut current_job: CurrentJob,
     wallets: Wallets,
     blockchain_cfg: BlockchainConfig,
+    electrum_pool: ElectrumClientPool,
     addresses: Addresses,
     utxos: Utxos,
     ledger: Ledger,
@@ -207,6 +215,7 @@ async fn sync_wallet(
                 pool,
                 wallets,
                 blockchain_cfg,
+                electrum_pool,
                 utxos,
                 addresses,
                 ledger,
@@ -387,6 +396,7 @@ async fn batch_signing(
 async fn batch_broadcasting(
     mut current_job: CurrentJob,
     blockchain_cfg: BlockchainConfig,
+    electrum_pool: ElectrumClientPool,
     batches: Batches,
 ) -> Result<(), JobError> {
     JobExecutor::builder(&mut current_job)
@@ -394,7 +404,7 @@ async fn batch_broadcasting(
         .expect("couldn't build JobExecutor")
         .execute(|data| async move {
             let data: BatchBroadcastingData = data.expect("no BatchBroadcastingData available");
-            batch_broadcasting::execute(data, blockchain_cfg, batches).await
+            batch_broadcasting::execute(data, blockchain_cfg, electrum_pool, batches).await
         })
         .await?;
     Ok(())
