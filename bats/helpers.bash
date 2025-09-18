@@ -85,8 +85,30 @@ lnd_cli() {
 }
 
 reset_pg() {
+  # Use a lock file to ensure only one test resets the database at a time
+  local lockfile="${BRIA_HOME}/.db_reset.lock"
+  local lockdir=$(dirname "$lockfile")
+  
+  # Ensure the directory exists
+  mkdir -p "$lockdir"
+  
+  # Try to acquire lock with timeout (30 seconds)
+  local count=0
+  while ! (set -C; echo $$ > "$lockfile") 2>/dev/null; do
+    if [ $count -ge 30 ]; then
+      echo "Failed to acquire database reset lock after 30 seconds"
+      exit 1
+    fi
+    sleep 1
+    count=$((count + 1))
+  done
+  
+  # Execute the reset with the lock held
   ${DOCKER_ENGINE} exec "${COMPOSE_PROJECT_NAME}-postgres-1" psql $PG_CON -c "DROP SCHEMA public CASCADE"
   ${DOCKER_ENGINE} exec "${COMPOSE_PROJECT_NAME}-postgres-1" psql $PG_CON -c "CREATE SCHEMA public"
+  
+  # Release the lock
+  rm -f "$lockfile"
 }
 
 restart_bitcoin_stack() {
@@ -115,21 +137,52 @@ bitcoind_init() {
 }
 
 start_daemon() {
-  SIGNER_ENCRYPTION_KEY="${SIGNER_ENCRYPTION_KEY}" background bria_cmd daemon --config ./bats/bria.${BRIA_CONFIG:-local}.yml run > .e2e-logs
-  for i in {1..20}
-  do
-    if head .e2e-logs | grep -q 'Starting main server on port'; then
-      break
-    else
-      sleep 1
+  # Use a lock file to ensure only one test starts the daemon/runs migrations at a time
+  local lockfile="${BRIA_HOME}/.daemon_start.lock"
+  local lockdir=$(dirname "$lockfile")
+  local daemon_marker="${BRIA_HOME}/.daemon_initialized"
+  
+  # Ensure the directory exists
+  mkdir -p "$lockdir"
+  
+  # Try to acquire lock with timeout (30 seconds)
+  local count=0
+  while ! (set -C; echo $$ > "$lockfile") 2>/dev/null; do
+    if [ $count -ge 30 ]; then
+      echo "Failed to acquire daemon start lock after 30 seconds"
+      exit 1
     fi
+    sleep 1
+    count=$((count + 1))
   done
+  
+  # Check if daemon has already been initialized
+  if [ ! -f "$daemon_marker" ]; then
+    SIGNER_ENCRYPTION_KEY="${SIGNER_ENCRYPTION_KEY}" background bria_cmd daemon --config ./bats/bria.${BRIA_CONFIG:-local}.yml run > .e2e-logs
+    for i in {1..20}
+    do
+      if head .e2e-logs | grep -q 'Starting main server on port'; then
+        # Mark daemon as initialized
+        touch "$daemon_marker"
+        break
+      else
+        sleep 1
+      fi
+    done
+  fi
+  
+  # Release the lock
+  rm -f "$lockfile"
 }
 
 stop_daemon() {
   if [[ -f ${BRIA_HOME}/daemon-pid ]]; then
     kill -9 $(cat ${BRIA_HOME}/daemon-pid) || true
   fi
+  # Clean up marker files
+  rm -f "${BRIA_HOME}/.daemon_initialized"
+  rm -f "${BRIA_HOME}/.daemon_start.lock"
+  rm -f "${BRIA_HOME}/.db_reset.lock"
 }
 
 bria_init() {
