@@ -12,6 +12,7 @@ pub mod bdk;
 pub mod cli;
 pub mod descriptor;
 mod dev_constants;
+mod electrum_client_pool;
 mod entity;
 pub mod fees;
 mod job;
